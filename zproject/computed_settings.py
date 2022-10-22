@@ -1053,9 +1053,9 @@ if DEVELOPMENT:
     LOGIN_URL = "/devlogin/"
 
 # deepak hashrem customizations begin
-HOME_NOT_LOGGED_IN = "https://www.hashrem.com"
-LOGIN_URL = "https://www.hashrem.com"
-HASHREM_API_URL = "http://139.59.90.145:8080/api/auth/VerifyTokenZulip/"
+HOME_NOT_LOGGED_IN = "https://www.next.daostreet.io"
+LOGIN_URL = "https://www.next.daostreet.io"
+HASHREM_API_URL = "http://next.api.daostreet.io/api/auth/VerifyTokenZulip/"
 # LOGOUT_REDIRECT_URL = "https://www.hashrem.com"
 REGISTER_LINK_DISABLED = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
