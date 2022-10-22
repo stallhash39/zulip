@@ -18,7 +18,6 @@ from django.views.generic import RedirectView, TemplateView
 from zerver.forms import LoggingSetPasswordForm
 from zerver.lib.integrations import WEBHOOK_INTEGRATIONS
 from zerver.lib.rest import rest_path
-from zerver.lib.url_redirects import DOCUMENTATION_REDIRECTS
 from zerver.tornado.views import cleanup_event_queue, get_events, get_events_internal, notify
 from zerver.views.alert_words import add_alert_words, list_alert_words, remove_alert_words
 from zerver.views.attachments import list_by_user, remove
@@ -78,6 +77,14 @@ from zerver.views.message_flags import (
 )
 from zerver.views.message_send import render_message_backend, send_message_backend, zcommand_backend
 from zerver.views.muting import mute_user, unmute_user, update_muted_topic
+from zerver.views.portico import (
+    app_download_link_redirect,
+    apps_view,
+    hello_view,
+    landing_view,
+    plans_view,
+    team_view,
+)
 from zerver.views.presence import (
     get_presence_backend,
     get_statuses_for_realm,
@@ -91,7 +98,6 @@ from zerver.views.push_notifications import (
     remove_apns_device_token,
 )
 from zerver.views.reactions import add_reaction, remove_reaction
-from zerver.views.read_receipts import read_receipts
 from zerver.views.realm import (
     check_subdomain_available,
     deactivate_realm,
@@ -139,7 +145,6 @@ from zerver.views.streams import (
     create_default_stream_group,
     deactivate_stream_backend,
     delete_in_topic,
-    get_stream_backend,
     get_streams_backend,
     get_subscribers_backend,
     get_topics_backend,
@@ -162,7 +167,6 @@ from zerver.views.typing import send_notification_backend
 from zerver.views.unsubscribe import email_unsubscribe
 from zerver.views.upload import (
     serve_file_backend,
-    serve_file_download_backend,
     serve_file_url_backend,
     serve_local_file_unauthed,
     upload_file_backend,
@@ -171,11 +175,7 @@ from zerver.views.user_groups import (
     add_user_group,
     delete_user_group,
     edit_user_group,
-    get_is_user_group_member,
-    get_subgroups_of_user_group,
     get_user_group,
-    get_user_group_members,
-    update_subgroups_of_user_group,
     update_user_group_backend,
 )
 from zerver.views.user_settings import (
@@ -188,7 +188,6 @@ from zerver.views.user_settings import (
 from zerver.views.users import (
     add_bot_backend,
     avatar,
-    avatar_medium,
     create_user_backend,
     deactivate_bot_backend,
     deactivate_user_backend,
@@ -218,6 +217,10 @@ from zproject.legacy_urls import legacy_urls
 if settings.TWO_FACTOR_AUTHENTICATION_ENABLED:
     from two_factor.gateways.twilio.urls import urlpatterns as tf_twilio_urls
     from two_factor.urls import urlpatterns as tf_urls
+
+from zerver.views.development.hashrem_login import (
+    hashrem_direct_login,
+)
 
 # NB: There are several other pieces of code which route requests by URL:
 #
@@ -253,7 +256,7 @@ v1_api_and_json_patterns = [
     # realm/emoji -> zerver.views.realm_emoji
     rest_path("realm/emoji", GET=list_emoji),
     rest_path(
-        "realm/emoji/<path:emoji_name>",
+        "realm/emoji/<emoji_name>",
         POST=upload_emoji,
         DELETE=(delete_emoji, {"intentionally_undocumented"}),
     ),
@@ -339,8 +342,6 @@ v1_api_and_json_patterns = [
     # POST adds a reaction to a message
     # DELETE removes a reaction from a message
     rest_path("messages/<int:message_id>/reactions", POST=add_reaction, DELETE=remove_reaction),
-    # read_receipts -> zerver.views.read_receipts
-    rest_path("messages/<int:message_id>/read_receipts", GET=read_receipts),
     # attachments -> zerver.views.attachments
     rest_path("attachments", GET=list_by_user),
     rest_path("attachments/<int:attachment_id>", DELETE=remove),
@@ -373,20 +374,9 @@ v1_api_and_json_patterns = [
     rest_path("user_groups", GET=get_user_group),
     rest_path("user_groups/create", POST=add_user_group),
     rest_path("user_groups/<int:user_group_id>", PATCH=edit_user_group, DELETE=delete_user_group),
-    rest_path(
-        "user_groups/<int:user_group_id>/members",
-        GET=get_user_group_members,
-        POST=update_user_group_backend,
-    ),
-    rest_path(
-        "user_groups/<int:user_group_id>/subgroups",
-        POST=update_subgroups_of_user_group,
-        GET=get_subgroups_of_user_group,
-    ),
-    rest_path(
-        "user_groups/<int:user_group_id>/members/<int:user_id>", GET=get_is_user_group_member
-    ),
+    rest_path("user_groups/<int:user_group_id>/members", POST=update_user_group_backend),
     # users/me -> zerver.views.user_settings
+    rest_path("users/me/api_key/regenerate", POST=regenerate_api_key),
     rest_path("users/me/avatar", POST=set_avatar_backend, DELETE=delete_avatar_backend),
     # users/me/hotspots -> zerver.views.hotspots
     rest_path(
@@ -441,10 +431,7 @@ v1_api_and_json_patterns = [
     # GET returns "stream info" (undefined currently?), HEAD returns whether stream exists (200 or 404)
     rest_path("streams/<int:stream_id>/members", GET=get_subscribers_backend),
     rest_path(
-        "streams/<int:stream_id>",
-        GET=get_stream_backend,
-        PATCH=update_stream_backend,
-        DELETE=deactivate_stream_backend,
+        "streams/<int:stream_id>", PATCH=update_stream_backend, DELETE=deactivate_stream_backend
     ),
     # Delete topic in stream
     rest_path("streams/<int:stream_id>/delete_topic", POST=delete_in_topic),
@@ -470,7 +457,7 @@ v1_api_and_json_patterns = [
     rest_path("users/me/subscriptions/muted_topics", PATCH=update_muted_topic),
     rest_path("users/me/muted_users/<int:muted_user_id>", POST=mute_user, DELETE=unmute_user),
     # used to register for an event queue in tornado
-    rest_path("register", POST=(events_register_backend, {"allow_anonymous_user_web"})),
+    rest_path("register", POST=events_register_backend),
     # events -> zerver.tornado.views
     rest_path("events", GET=get_events, DELETE=cleanup_event_queue),
     # report -> zerver.views.report
@@ -614,6 +601,53 @@ i18n_urls = [
     path("integrations/doc-html/<integration_name>", integration_doc),
     path("integrations/", integrations_view),
     path("integrations/<path:path>", integrations_view),
+    # Landing page, features pages, signup form, etc.
+    path("hello/", hello_view),
+    path("new-user/", RedirectView.as_view(url="/hello", permanent=True)),
+    path("features/", landing_view, {"template_name": "zerver/features.html"}),
+    path("plans/", plans_view, name="plans"),
+    path("apps/", apps_view),
+    path("apps/download/<platform>", app_download_link_redirect),
+    path("apps/<platform>", apps_view),
+    path(
+        "developer-community/", RedirectView.as_view(url="/development-community/", permanent=True)
+    ),
+    path(
+        "development-community/",
+        landing_view,
+        {"template_name": "zerver/development-community.html"},
+    ),
+    # Renamed to have a cleared URL.
+    path(
+        "developer-community/", RedirectView.as_view(url="/development-community/", permanent=True)
+    ),
+    path("attribution/", landing_view, {"template_name": "zerver/attribution.html"}),
+    path("team/", team_view),
+    path("history/", landing_view, {"template_name": "zerver/history.html"}),
+    path("why-zulip/", landing_view, {"template_name": "zerver/why-zulip.html"}),
+    path("for/education/", landing_view, {"template_name": "zerver/for-education.html"}),
+    path("for/events/", landing_view, {"template_name": "zerver/for-events.html"}),
+    path("for/open-source/", landing_view, {"template_name": "zerver/for-open-source.html"}),
+    path("for/research/", landing_view, {"template_name": "zerver/for-research.html"}),
+    path("for/business/", landing_view, {"template_name": "zerver/for-business.html"}),
+    path("for/companies/", RedirectView.as_view(url="/for/business/", permanent=True)),
+    path("case-studies/idrift/", landing_view, {"template_name": "zerver/idrift-case-study.html"}),
+    path("case-studies/tum/", landing_view, {"template_name": "zerver/tum-case-study.html"}),
+    path("case-studies/ucsd/", landing_view, {"template_name": "zerver/ucsd-case-study.html"}),
+    path("case-studies/rust/", landing_view, {"template_name": "zerver/rust-case-study.html"}),
+    path("case-studies/lean/", landing_view, {"template_name": "zerver/lean-case-study.html"}),
+    path(
+        "for/communities/",
+        landing_view,
+        {"template_name": "zerver/for-communities.html"},
+    ),
+    # We merged this into /for/communities.
+    path(
+        "for/working-groups-and-communities/",
+        RedirectView.as_view(url="/for/communities/", permanent=True),
+    ),
+    path("self-hosting/", landing_view, {"template_name": "zerver/self-hosting.html"}),
+    path("security/", landing_view, {"template_name": "zerver/security.html"}),
 ]
 
 # Make a copy of i18n_urls so that they appear without prefix for english
@@ -640,19 +674,12 @@ urls += [
         name="local_file_unauthed",
     ),
     rest_path(
-        "user_uploads/download/<realm_id_str>/<path:filename>",
-        GET=(serve_file_download_backend, {"override_api_url_scheme"}),
-    ),
-    rest_path(
         "user_uploads/<realm_id_str>/<path:filename>",
-        GET=(serve_file_backend, {"override_api_url_scheme", "allow_anonymous_user_web"}),
+        GET=(serve_file_backend, {"override_api_url_scheme"}),
     ),
     # This endpoint redirects to camo; it requires an exception for the
     # same reason.
-    rest_path(
-        "thumbnail",
-        GET=(backend_serve_thumbnail, {"override_api_url_scheme", "allow_anonymous_user_web"}),
-    ),
+    rest_path("thumbnail", GET=(backend_serve_thumbnail, {"override_api_url_scheme"})),
     # Avatars have the same constraint because their URLs are included
     # in API data structures used by both the mobile and web clients.
     rest_path(
@@ -661,10 +688,8 @@ urls += [
     ),
     rest_path(
         "avatar/<email_or_id>/medium",
-        GET=(
-            avatar_medium,
-            {"override_api_url_scheme", "allow_anonymous_user_web"},
-        ),
+        {"medium": True},
+        GET=(avatar, {"override_api_url_scheme", "allow_anonymous_user_web"}),
     ),
 ]
 
@@ -678,7 +703,8 @@ urls += [
 # We don't create URLs for particular Git integrations here
 # because of generic one below
 for incoming_webhook in WEBHOOK_INTEGRATIONS:
-    urls.append(incoming_webhook.url_object)
+    if incoming_webhook.url_object:
+        urls.append(incoming_webhook.url_object)
 
 # Desktop-specific authentication URLs
 urls += [
@@ -702,11 +728,6 @@ v1_api_mobile_patterns = [
     # This json format view used by the mobile apps accepts a username
     # password/pair and returns an API key.
     path("fetch_api_key", api_fetch_api_key),
-    # The endpoint for regenerating and obtaining a new API key
-    # should only be available by authenticating with the current
-    # API key - as we consider access to the API key sensitive
-    # and just having a logged-in session should be insufficient.
-    rest_path("users/me/api_key/regenerate", POST=regenerate_api_key),
 ]
 
 # View for uploading messages from email mirror
@@ -781,19 +802,98 @@ policy_documentation_view = MarkdownDirectoryView.as_view(
     template_name="zerver/documentation_main.html",
     policies_view=True,
 )
-
-# Redirects due to us having moved help center, API or policy documentation pages:
-for redirect in DOCUMENTATION_REDIRECTS:
-    old_url = redirect.old_url.lstrip("/")
-    urls += [path(old_url, RedirectView.as_view(url=redirect.new_url, permanent=True))]
-
 urls += [
+    # Redirects due to us having moved the docs:
+    path(
+        "help/delete-a-stream", RedirectView.as_view(url="/help/archive-a-stream", permanent=True)
+    ),
+    path("api/delete-stream", RedirectView.as_view(url="/api/archive-stream", permanent=True)),
+    path(
+        "help/change-the-topic-of-a-message",
+        RedirectView.as_view(url="/help/rename-a-topic", permanent=True),
+    ),
+    path(
+        "help/configure-missed-message-emails",
+        RedirectView.as_view(url="/help/email-notifications", permanent=True),
+    ),
+    path(
+        "help/add-an-alert-word",
+        RedirectView.as_view(
+            url="/help/pm-mention-alert-notifications#alert-words", permanent=True
+        ),
+    ),
+    path(
+        "help/test-mobile-notifications",
+        RedirectView.as_view(url="/help/mobile-notifications", permanent=True),
+    ),
+    path(
+        "help/troubleshooting-desktop-notifications",
+        RedirectView.as_view(
+            url="/help/desktop-notifications#troubleshooting-desktop-notifications", permanent=True
+        ),
+    ),
+    path(
+        "help/change-notification-sound",
+        RedirectView.as_view(
+            url="/help/desktop-notifications#change-notification-sound", permanent=True
+        ),
+    ),
+    path(
+        "help/configure-message-notification-emails",
+        RedirectView.as_view(url="/help/email-notifications", permanent=True),
+    ),
+    path(
+        "help/disable-new-login-emails",
+        RedirectView.as_view(url="/help/email-notifications#new-login-emails", permanent=True),
+    ),
+    # This redirect is particularly important, because the old URL
+    # appears in links from Welcome Bot messages.
+    path(
+        "help/about-streams-and-topics",
+        RedirectView.as_view(url="/help/streams-and-topics", permanent=True),
+    ),
+    path(
+        "help/community-topic-edits",
+        RedirectView.as_view(url="/help/configure-who-can-edit-topics", permanent=True),
+    ),
+    path(
+        "help/only-allow-admins-to-add-emoji",
+        RedirectView.as_view(
+            url="/help/custom-emoji#change-who-can-add-custom-emoji", permanent=True
+        ),
+    ),
+    path(
+        "help/configure-who-can-add-custom-emoji",
+        RedirectView.as_view(
+            url="/help/custom-emoji#change-who-can-add-custom-emoji", permanent=True
+        ),
+    ),
+    path(
+        "help/add-custom-emoji",
+        RedirectView.as_view(url="/help/custom-emoji", permanent=True),
+    ),
+    path(
+        "help/night-mode",
+        RedirectView.as_view(url="/help/dark-theme", permanent=True),
+    ),
     path("help/", help_documentation_view),
     path("help/<path:article>", help_documentation_view),
     path("api/", api_documentation_view),
     path("api/<slug:article>", api_documentation_view),
     path("policies/", policy_documentation_view),
     path("policies/<slug:article>", policy_documentation_view),
+    path(
+        "privacy/",
+        RedirectView.as_view(url="/policies/privacy"),
+    ),
+    path(
+        "terms/",
+        RedirectView.as_view(url="/policies/terms"),
+    ),
+]
+
+urls += [
+    path("accounts/login/hashrem/", hashrem_direct_login, name="hashrem-login-local"),
 ]
 
 # Two-factor URLs
